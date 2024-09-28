@@ -31,6 +31,7 @@ const md5Hasher = new HashManager('md5', 'hex');
 import { TransferProtocolMetadata } from 'civkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import { URL } from 'url';
 
 function sendResponse<T>(res: Response, data: T, meta: TransferProtocolMetadata): T {
     if (meta.code) {
@@ -612,163 +613,108 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
 
     async crawl(req: Request, res: Response) {
         console.log('Crawl method called with request:', req.url);
-        // res.setHeader('Access-Control-Allow-Origin', '*');
-        // res.send('Helloooooooo!');
-        // const rpcReflect: RPCReflection = {};
         const ctx = { req, res };
         console.log(`req.headers: ${JSON.stringify(req.headers)}`);
-        const crawlerOptionsHeaderOnly = CrawlerOptionsHeaderOnly.from(req);
-        const crawlerOptionsParamsAllowed = CrawlerOptions.from(req.method === 'POST' ? req.body : req.query, req);
-        const noSlashURL = ctx.req.url.slice(1);
-        const crawlerOptions = ctx.req.method === 'GET' ? crawlerOptionsHeaderOnly : crawlerOptionsParamsAllowed;
-        console.log('Crawler options:', crawlerOptions);
-        if (!noSlashURL && !crawlerOptions.url) {
-            console.log('No URL provided, returning index');
-            if (!ctx.req.accepts('text/plain') && (ctx.req.accepts('text/json') || ctx.req.accepts('application/json'))) {
-                return this.getIndex();
-            }
 
-            return sendResponse(res, `${this.getIndex()}`,
-                { contentType: 'text/plain', envelope: null }
-            );
-        }
-
-        // Prevent circular crawling
-        this.puppeteerControl.circuitBreakerHosts.add(
-            ctx.req.hostname.toLowerCase()
-        );
-        console.log('Added to circuit breaker hosts:', ctx.req.hostname.toLowerCase());
-
-        let urlToCrawl;
-        const normalizeUrl = (await pNormalizeUrl).default;
         try {
-            const urlParam = req.query.url || req.url.slice(1);
-            const urlToNormalize = Array.isArray(urlParam) ? urlParam[0] : urlParam;
-            if (typeof urlToNormalize === 'string' && !urlToNormalize.startsWith('favicon.ico')) {
-                urlToCrawl = new URL(
-                    normalizeUrl(
-                        urlToNormalize.trim(),
-                        {
-                            stripWWW: false,
-                            removeTrailingSlash: false,
-                            removeSingleSlash: false,
-                            sortQueryParameters: false,
-                        }
-                    )
-                );
-                console.log('Normalized URL to crawl:', urlToCrawl.toString());
-            } else {
-                console.log('Skipping invalid or favicon URL:', urlToNormalize);
-                return sendResponse(res, 'Skipped', { contentType: 'text/plain', envelope: null });
+            const crawlerOptionsHeaderOnly = CrawlerOptionsHeaderOnly.from(req);
+            const crawlerOptionsParamsAllowed = CrawlerOptions.from(req.method === 'POST' ? req.body : req.query, req);
+            const noSlashURL = ctx.req.url.slice(1);
+            const crawlerOptions = ctx.req.method === 'GET' ? crawlerOptionsHeaderOnly : crawlerOptionsParamsAllowed;
+            console.log('Crawler options:', crawlerOptions);
+
+            // Check if the request is for a screenshot
+            if (noSlashURL.startsWith('instant-screenshots/')) {
+                return this.serveScreenshot(noSlashURL, res);
             }
-        } catch (err) {
-            console.error('Error normalizing URL:', err);
-            return sendResponse(res, 'Invalid URL', { contentType: 'text/plain', envelope: null, code: 400 });
-        }
-        if (urlToCrawl.protocol !== 'http:' && urlToCrawl.protocol !== 'https:') {
-            console.error('Invalid protocol:', urlToCrawl.protocol);
-            throw new ParamValidationError({
-                message: `Invalid protocol ${urlToCrawl.protocol}`,
-                path: 'url'
-            });
-        }
 
-        const crawlOpts = this.configure(crawlerOptions, req, urlToCrawl);
-        console.log('Configured crawl options:', crawlOpts);
+            // Handle favicon.ico request
+            if (noSlashURL === 'favicon.ico') {
+                console.log('Favicon request detected');
+                return sendResponse(res, 'Favicon not available', { contentType: 'text/plain', envelope: null, code: 404 });
+            }
 
-        if (!ctx.req.accepts('text/plain') && ctx.req.accepts('text/event-stream')) {
-            const sseStream = new OutputServerEventStream();
-            // rpcReflect.return(sseStream);
+            // Extract the actual URL to crawl
+            const urlToCrawl = noSlashURL.startsWith('http') ? noSlashURL : `http://${noSlashURL}`;
 
+            // Validate URL
+            let parsedUrl: URL;
             try {
-                for await (const scrapped of this.scrap(urlToCrawl, crawlOpts, crawlerOptions)) {
-                    if (!scrapped) {
-                        continue;
-                    }
-
-                    const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, urlToCrawl);
-                    sseStream.write({
-                        event: 'data',
-                        data: formatted,
-                    });
+                parsedUrl = new URL(urlToCrawl);
+                if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+                    throw new Error('Invalid protocol');
                 }
-            } catch (err: any) {
-                this.logger.error(`Failed to crawl ${urlToCrawl}`, { err: marshalErrorLike(err) });
-                sseStream.write({
-                    event: 'error',
-                    data: marshalErrorLike(err),
-                });
+                // Check if the TLD is valid
+                if (!this.isValidTLD(parsedUrl.hostname)) {
+                    throw new Error('Invalid TLD');
+                }
+            } catch (error) {
+                console.log('Invalid URL:', urlToCrawl, error);
+                return sendResponse(res, 'Invalid URL', { contentType: 'text/plain', envelope: null, code: 400 });
             }
 
-            sseStream.end();
+            // Prevent circular crawling
+            this.puppeteerControl.circuitBreakerHosts.add(ctx.req.hostname.toLowerCase());
+            console.log('Added to circuit breaker hosts:', ctx.req.hostname.toLowerCase());
 
-            return sseStream;
-        }
+            const crawlOpts = this.configure(crawlerOptions, req, parsedUrl);
+            console.log('Configured crawl options:', crawlOpts);
 
-        let lastScrapped;
-        if (!ctx.req.accepts('text/plain') && (ctx.req.accepts('text/json') || ctx.req.accepts('application/json'))) {
-            for await (const scrapped of this.scrap(urlToCrawl, crawlOpts, crawlerOptions)) {
+            let lastScrapped: PageSnapshot | undefined;
+
+            for await (const scrapped of this.scrap(parsedUrl, crawlOpts, crawlerOptions)) {
                 lastScrapped = scrapped;
                 if (crawlerOptions.waitForSelector || ((!scrapped?.parsed?.content || !scrapped.title?.trim()) && !scrapped?.pdfs?.length)) {
                     continue;
                 }
 
-                const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, urlToCrawl);
+                const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, parsedUrl);
 
                 if (crawlerOptions.timeout === undefined) {
-                    return formatted;
+                    return this.sendFormattedResponse(res, formatted, crawlerOptions.respondWith);
                 }
             }
 
             if (!lastScrapped) {
-                throw new AssertionFailureError(`No content available for URL ${urlToCrawl}`);
+                return sendResponse(res, 'No content available', { contentType: 'text/plain', envelope: null, code: 404 });
             }
 
-            const formatted = await this.formatSnapshot(crawlerOptions.respondWith, lastScrapped, urlToCrawl);
+            const formatted = await this.formatSnapshot(crawlerOptions.respondWith, lastScrapped, parsedUrl);
+            return this.sendFormattedResponse(res, formatted, crawlerOptions.respondWith);
 
-            return formatted;
+        } catch (error) {
+            console.error('Error in crawl method:', error);
+            return sendResponse(res, 'Internal server error', { contentType: 'text/plain', envelope: null, code: 500 });
         }
+    }
 
-        for await (const scrapped of this.scrap(urlToCrawl, crawlOpts, crawlerOptions)) {
-            lastScrapped = scrapped;
-            if (crawlerOptions.waitForSelector || ((!scrapped?.parsed?.content || !scrapped.title?.trim()) && !scrapped?.pdfs?.length)) {
-                continue;
-            }
+    private isValidTLD(hostname: string): boolean {
+        const parts = hostname.split('.');
+        return parts.length > 1 && parts[parts.length - 1].length >= 2;
+    }
 
-            const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, urlToCrawl);
-
-            if (crawlerOptions.timeout === undefined) {
-                if (crawlerOptions.respondWith === 'screenshot' && Reflect.get(formatted, 'screenshotUrl')) {
-                    return sendResponse(res, `${formatted}`,
-                        { code: 302, envelope: null, headers: { Location: Reflect.get(formatted, 'screenshotUrl') } }
-                    );
-                }
-                if (crawlerOptions.respondWith === 'pageshot' && Reflect.get(formatted, 'pageshotUrl')) {
-                    return sendResponse(res, `${formatted}`,
-                        { code: 302, envelope: null, headers: { Location: Reflect.get(formatted, 'pageshotUrl') } }
-                    );
-                }
-
-                return sendResponse(res, `${formatted}`, { contentType: 'text/plain', envelope: null });
-            }
+    private serveScreenshot(screenshotPath: string, res: Response) {
+        const fullPath = path.join('/app', 'local-storage', screenshotPath);
+        console.log(`Attempting to serve screenshot from: ${fullPath}`);
+        if (fs.existsSync(fullPath)) {
+            return res.sendFile(fullPath);
+        } else {
+            console.log(`Screenshot not found: ${fullPath}`);
+            return sendResponse(res, 'Screenshot not found', { contentType: 'text/plain', envelope: null, code: 404 });
         }
+    }
 
-        if (!lastScrapped) {
-            throw new AssertionFailureError(`No content available for URL ${urlToCrawl}`);
-        }
-
-        const formatted = await this.formatSnapshot(crawlerOptions.respondWith, lastScrapped, urlToCrawl);
-        if (crawlerOptions.respondWith === 'screenshot' && Reflect.get(formatted, 'screenshotUrl')) {
+    private sendFormattedResponse(res: Response, formatted: any, respondWith: string) {
+        if (respondWith === 'screenshot' && Reflect.get(formatted, 'screenshotUrl')) {
             return sendResponse(res, `${formatted}`,
                 { code: 302, envelope: null, headers: { Location: Reflect.get(formatted, 'screenshotUrl') } }
             );
         }
-        if (crawlerOptions.respondWith === 'pageshot' && Reflect.get(formatted, 'pageshotUrl')) {
+        if (respondWith === 'pageshot' && Reflect.get(formatted, 'pageshotUrl')) {
             return sendResponse(res, `${formatted}`,
                 { code: 302, envelope: null, headers: { Location: Reflect.get(formatted, 'pageshotUrl') } }
             );
         }
-
         return sendResponse(res, `${formatted}`, { contentType: 'text/plain', envelope: null });
     }
 
@@ -852,7 +798,7 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
         yield results;
 
         try {
-            while (!concluded) {
+                        while (!concluded) {
                 await nextDeferred.promise;
 
                 yield results;
