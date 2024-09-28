@@ -74,22 +74,26 @@ Once the Docker container is running, you can use curl to make requests. Here ar
 
 1. 📝 Markdown (bypasses readability processing):
    ```bash
-   curl -H "X-Respond-With: markdown" http://127.0.0.1:3000/https://google.com
+   curl -H "X-Respond-With: markdown" 'http://127.0.0.1:3000/https://google.com'
    ```
 
 2. 🌐 HTML (returns documentElement.outerHTML):
    ```bash
-   curl -H "X-Respond-With: html" http://127.0.0.1:3000/https://google.com
+   curl -H "X-Respond-With: html" 'http://127.0.0.1:3000/https://google.com'
    ```
 
 3. 📄 Text (returns document.body.innerText):
    ```bash
-   curl -H "X-Respond-With: text" http://127.0.0.1:3000/https://google.com
+   curl -H "X-Respond-With: text" 'http://127.0.0.1:3000/https://google.com'
    ```
 
-4. 📸 Screenshot (returns the URL of the webpage's screenshot):
+4. 📸 Screen-Size Screenshot (returns the URL of the webpage's screenshot):
    ```bash
-   curl -H "X-Respond-With: screenshot" http://127.0.0.1:3000/https://google.com
+   curl -H "X-Respond-With: screenshot" 'http://127.0.0.1:3000/https://google.com'
+   ```
+5.  📸 Full-Page Screenshot (returns the URL of the webpage's screenshot):
+   ```bash
+   curl -H "X-Respond-With: pageshot" 'http://127.0.0.1:3000/https://google.com'
    ```
 
 ## 🙏 Acknowledgements
