@@ -28,11 +28,13 @@ It converts any URL to an LLM-friendly input with `http://127.0.0.1:3000/https:/
    ```
 
 2. Run the container:
+   
+   Replace `/path/to/local-storage` with the directory where you want to store screenshots.
+   
    ```bash
    docker run -p 3000:3000 -v /path/to/local-storage:/app/local-storage ghcr.io/intergalacticalvariable/reader:latest
    ```
 
-   Replace `/path/to/local-storage` with the directory where you want to store screenshots.
 
 ### Option 2: Building the image locally
 
