@@ -4,11 +4,12 @@ import { Logger } from './logger';
 import { OutputServerEventStream } from './output-stream';
 import { RPCReflect } from './rpc-reflect';
 import { injectable } from 'tsyringe';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @injectable()
 export class AsyncContext {
     private storage: Map<string, any> = new Map();
-
     set(key: string, value: any) {
         this.storage.set(key, value);
     }
@@ -33,41 +34,44 @@ export function Param(name: string, options?: any): ParameterDecorator {
 
 @injectable()
 export class FirebaseStorageBucketControl {
-    bucket: any;
+    private localStorageDir: string;
 
     constructor() {
-        this.bucket = {
-            file: (fileName: string) => ({
-                exists: async () => [true]
-            })
-        };
+        this.localStorageDir = path.join('/app', 'local-storage');
+        if (!fs.existsSync(this.localStorageDir)) {
+            fs.mkdirSync(this.localStorageDir, { recursive: true });
+        }
     }
 
     async uploadFile(filePath: string, destination: string): Promise<string> {
-        console.log(`Mock: Uploading file from ${filePath} to ${destination}`);
-        return `https://storage.googleapis.com/mock-bucket/${destination}`;
+        const destPath = path.join(this.localStorageDir, destination);
+        await fs.promises.copyFile(filePath, destPath);
+        return `file://${destPath}`;
     }
 
     async downloadFile(filePath: string, destination: string): Promise<void> {
-        console.log(`Mock: Downloading file from ${filePath} to ${destination}`);
+        const sourcePath = path.join(this.localStorageDir, filePath);
+        await fs.promises.copyFile(sourcePath, destination);
     }
 
     async deleteFile(filePath: string): Promise<void> {
-        console.log(`Mock: Deleting file ${filePath}`);
+        const fullPath = path.join(this.localStorageDir, filePath);
+        await fs.promises.unlink(fullPath);
     }
 
     async fileExists(filePath: string): Promise<boolean> {
-        console.log(`Mock: Checking if file ${filePath} exists`);
-        return true;
+        const fullPath = path.join(this.localStorageDir, filePath);
+        return fs.existsSync(fullPath);
     }
 
     async saveFile(filePath: string, content: Buffer, options?: any): Promise<void> {
-        console.log(`Mock: Saving file ${filePath}`);
+        const fullPath = path.join(this.localStorageDir, filePath);
+        await fs.promises.writeFile(fullPath, content);
     }
 
     async signDownloadUrl(filePath: string, expirationTime: number): Promise<string> {
-        console.log(`Mock: Signing download URL for ${filePath}`);
-        return `https://storage.googleapis.com/mock-bucket/${filePath}?token=mock-signed-url`;
+        const fullPath = path.join(this.localStorageDir, filePath);
+        return `file://${fullPath}`;
     }
 }
 

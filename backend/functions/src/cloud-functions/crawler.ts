@@ -29,6 +29,8 @@ const md5Hasher = new HashManager('md5', 'hex');
 // const logger = new Logger('Crawler');
 
 import { TransferProtocolMetadata } from 'civkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 function sendResponse<T>(res: Response, data: T, meta: TransferProtocolMetadata): T {
     if (meta.code) {
@@ -328,22 +330,19 @@ export class CrawlerHost extends RPCHost {
         pageshotUrl?: string;
     }, nominalUrl?: URL) {
         console.log('Formatting snapshot', { mode, url: nominalUrl?.toString() });
+        const host = this.threadLocal.get('host') || '192.168.178.100:1337';
+
         if (mode === 'screenshot') {
             if (snapshot.screenshot && !snapshot.screenshotUrl) {
                 console.log('Saving screenshot');
-                const fid = `instant-screenshots/${randomUUID()}`;
-                await this.firebaseObjectStorage.saveFile(fid, snapshot.screenshot, {
-                    metadata: {
-                        contentType: 'image/png',
-                    }
-                });
-                snapshot.screenshotUrl = await this.firebaseObjectStorage.signDownloadUrl(fid, Date.now() + this.urlValidMs);
+                const fileName = `screenshot-${randomUUID()}.png`;
+                const filePath = await this.saveFileLocally(fileName, snapshot.screenshot);
+                snapshot.screenshotUrl = `http://${host}/instant-screenshots/${fileName}`;
                 console.log('Screenshot saved and URL generated', { screenshotUrl: snapshot.screenshotUrl });
             }
 
             return {
                 ...this.getGeneralSnapshotMixins(snapshot),
-                // html: snapshot.html,
                 screenshotUrl: snapshot.screenshotUrl,
                 toString() {
                     return this.screenshotUrl;
@@ -353,13 +352,9 @@ export class CrawlerHost extends RPCHost {
         if (mode === 'pageshot') {
             if (snapshot.pageshot && !snapshot.pageshotUrl) {
                 console.log('Saving pageshot');
-                const fid = `instant-screenshots/${randomUUID()}`;
-                await this.firebaseObjectStorage.saveFile(fid, snapshot.pageshot, {
-                    metadata: {
-                        contentType: 'image/png',
-                    }
-                });
-                snapshot.pageshotUrl = await this.firebaseObjectStorage.signDownloadUrl(fid, Date.now() + this.urlValidMs);
+                const fileName = `pageshot-${randomUUID()}.png`;
+                const filePath = await this.saveFileLocally(fileName, snapshot.pageshot);
+                snapshot.pageshotUrl = `http://${host}/instant-screenshots/${fileName}`;
                 console.log('Pageshot saved and URL generated', { pageshotUrl: snapshot.pageshotUrl });
             }
 
@@ -647,24 +642,28 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
         let urlToCrawl;
         const normalizeUrl = (await pNormalizeUrl).default;
         try {
-            urlToCrawl = new URL(
-                normalizeUrl(
-                    (crawlerOptions.url || noSlashURL).trim(),
-                    {
-                        stripWWW: false,
-                        removeTrailingSlash: false,
-                        removeSingleSlash: false,
-                        sortQueryParameters: false,
-                    }
-                )
-            );
-            console.log('Normalized URL to crawl:', urlToCrawl.toString());
+            const urlParam = req.query.url || req.url.slice(1);
+            const urlToNormalize = Array.isArray(urlParam) ? urlParam[0] : urlParam;
+            if (typeof urlToNormalize === 'string' && !urlToNormalize.startsWith('favicon.ico')) {
+                urlToCrawl = new URL(
+                    normalizeUrl(
+                        urlToNormalize.trim(),
+                        {
+                            stripWWW: false,
+                            removeTrailingSlash: false,
+                            removeSingleSlash: false,
+                            sortQueryParameters: false,
+                        }
+                    )
+                );
+                console.log('Normalized URL to crawl:', urlToCrawl.toString());
+            } else {
+                console.log('Skipping invalid or favicon URL:', urlToNormalize);
+                return sendResponse(res, 'Skipped', { contentType: 'text/plain', envelope: null });
+            }
         } catch (err) {
             console.error('Error normalizing URL:', err);
-            throw new ParamValidationError({
-                message: `${err}`,
-                path: 'url'
-            });
+            return sendResponse(res, 'Invalid URL', { contentType: 'text/plain', envelope: null, code: 400 });
         }
         if (urlToCrawl.protocol !== 'http:' && urlToCrawl.protocol !== 'https:') {
             console.error('Invalid protocol:', urlToCrawl.protocol);
@@ -873,19 +872,17 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
         this.threadLocal.set('keepImgDataUrl', opts.keepImgDataUrl);
         this.threadLocal.set('cacheTolerance', opts.cacheTolerance);
         this.threadLocal.set('userAgent', opts.userAgent);
+        this.threadLocal.set('host', req.headers.host || '192.168.178.100:1337');
         if (opts.timeout) {
             this.threadLocal.set('timeout', opts.timeout * 1000);
         }
 
         const cookies = req.headers['x-set-cookie'] ?
             (Array.isArray(req.headers['x-set-cookie']) ? req.headers['x-set-cookie'] : [req.headers['x-set-cookie']])
-                .flatMap(cookieString =>
-                    cookieString.split(';').map(cookie => {
-                        const [name, ...valueParts] = cookie.trim().split('=');
-                        const value = valueParts.join('=');
-                        return { name, value, url: urlToCrawl.toString() };
-                    })
-                )
+                .map(cookie => {
+                    const [name, value] = cookie.split('=');
+                    return { name, value, url: urlToCrawl.toString() };
+                })
             : [];
 
         console.log('Cookies:', cookies);
@@ -936,5 +933,24 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
         }
 
         return this.formatSnapshot(mode, lastSnapshot, url);
+    }
+
+    async saveFileLocally(fileName: string, content: Buffer): Promise<string> {
+        const localDir = path.join('/app', 'local-storage', 'instant-screenshots');
+        console.log(`Attempting to save file in directory: ${localDir}`);
+        try {
+            if (!fs.existsSync(localDir)) {
+                console.log(`Directory ${localDir} does not exist. Creating it.`);
+                fs.mkdirSync(localDir, { recursive: true });
+            }
+            const filePath = path.join(localDir, fileName);
+            console.log(`Writing file to: ${filePath}`);
+            await fs.promises.writeFile(filePath, content);
+            console.log(`File successfully written to: ${filePath}`);
+            return filePath;
+        } catch (error) {
+            console.error(`Error saving file locally: ${error}`);
+            throw error;
+        }
     }
 }

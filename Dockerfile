@@ -30,3 +30,6 @@ RUN npm run build
 EXPOSE 3000
 # Start the application
 CMD ["node", "build/server.js"]
+
+# Create local storage directory and set permissions
+RUN mkdir -p /app/local-storage && chmod 777 /app/local-storage
