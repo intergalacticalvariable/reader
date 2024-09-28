@@ -28,11 +28,25 @@ It converts any URL to an LLM-friendly input with `http://127.0.0.1:3000/https:/
    ```
 
 2. Run the container:
-   
-   Replace `/path/to/local-storage` with the directory where you want to store screenshots.
-   
    ```bash
-   docker run -p 3000:3000 -v /path/to/local-storage:/app/local-storage ghcr.io/intergalacticalvariable/reader:latest
+   docker run -d -p 3000:3000 -v /path/to/local-storage:/app/local-storage --name reader-container ghcr.io/intergalacticalvariable/reader:latest
+   ```
+
+   Replace `/path/to/local-storage` with the directory where you want to store screenshots.
+
+   This command does the following:
+   - Maps port 3000 of the container to port 3000 on your host
+   - Mounts a volume for local storage
+   - Names the container `reader-container`
+
+3. To stop the container:
+   ```bash
+   docker stop reader-container
+   ```
+
+4. To start the container again:
+   ```bash
+   docker start reader-container
    ```
 
 
