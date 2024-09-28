@@ -612,6 +612,7 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
     }
 
     async crawl(req: Request, res: Response) {
+        this.logger.info(`Crawl request received for URL: ${req.url}`);
         console.log('Crawl method called with request:', req.url);
         const ctx = { req, res };
         console.log(`req.headers: ${JSON.stringify(req.headers)}`);
@@ -730,6 +731,7 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
     }
 
     async *scrap(urlToCrawl: URL, crawlOpts?: ExtraScrappingOptions, crawlerOpts?: CrawlerOptions) {
+        this.logger.info(`Starting scrap for URL: ${urlToCrawl.toString()}`);
         console.log('Starting scrap for URL:', urlToCrawl.toString());
         console.log('Crawl options:', crawlOpts);
         console.log('Crawler options:', crawlerOpts);
