@@ -44,12 +44,78 @@ This will fetch the content from https://example.com and return it in markdown f
 
 You can customize the request by changing the `X-Respond-With` header to other supported formats like `html`, `text`, `screenshot`, or `pageshot`.
 
+## Docker Deployment
+
+You can deploy the Reader service using Docker in two ways: by building the image yourself or by pulling the pre-built image from GitHub Packages.
+
+### Option 1: Using the pre-built image
+
+1. Pull the latest image from GitHub Packages:
+   ```bash
+   docker pull ghcr.io/intergalacticalvariable/reader:latest
+   ```
+
+2. Run the Docker container:
+   ```bash
+   docker run -p 3000:3000 ghcr.io/intergalacticalvariable/reader:latest
+   ```
+
+   This command runs the container and maps port 3000 of the container to port 3000 on your host machine.
+
+3. The service should now be accessible at `http://localhost:3000`.
+
+### Option 2: Building the image yourself
+
+If you prefer to build the image yourself or need to make modifications:
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/intergalacticalvariable/reader.git
+   cd reader
+   ```
+
+2. Build the Docker image:
+   ```bash
+   docker build -t reader .
+   ```
+
+3. Run the Docker container:
+   ```bash
+   docker run -p 3000:3000 reader
+   ```
+
+4. The service should now be accessible at `http://localhost:3000`.
+
+You can customize the Docker deployment by modifying the Dockerfile in the project root directory.
+
+## Usage
+
+Once the Docker container is running, you can use curl to make requests. For example:
+
+```bash
+curl -H "X-Respond-With: markdown" http://localhost:3000/https://example.com
+```
+
+This will fetch the content from https://example.com and return it in markdown format.
+
+You can customize the request by changing the `X-Respond-With` header to other supported formats like `html`, `text`, `screenshot`, or `pageshot`.
 
 ---
 
 # Reader
 
 Your LLMs deserve better input.
+
+## Table of Contents
+- [Features](#features)
+- [Install and Setup](#install-and-setup)
+- [Usage](#usage)
+- [API Documentation](#api-documentation)
+- [Updates](#updates)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Features
 
 Reader does two things:
 - **Read**: It converts any URL to an **LLM-friendly** input with `https://r.jina.ai/https://your.url`. Get improved output for your agent and RAG systems at no cost.
@@ -205,5 +271,8 @@ curl -H "X-With-Generated-Alt: true" https://r.jina.ai/https://en.m.wikipedia.or
 ```
 
 
+## Contributing
+We welcome contributions to Reader! Please see our [Contributing Guidelines](CONTRIBUTING.md) for more details on how to get started.
+
 ## License
-[Apache-2.0](./LICENSE)
+This project is licensed under the [MIT License](LICENSE).
