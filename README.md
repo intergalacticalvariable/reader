@@ -80,7 +80,12 @@ Once the Docker container is running, you can use curl to make requests. Here ar
 
 ## 🙏 Acknowledgements
 
-This project is based on the excellent work done by the Jina AI team on their [Reader project](https://github.com/jina-ai/reader). We've adapted it for local deployment and made some modifications to suit our needs.
+This project is based on the excellent work done by multiple contributors:
+
+1. The original [Jina AI Reader project](https://github.com/jina-ai/reader), which provided the foundation for this tool.
+
+2. [Harsh Gupta's adaptation](https://github.com/hargup/reader), which served as the immediate basis for this local deployment version.
+
 
 ## 📜 License
 
