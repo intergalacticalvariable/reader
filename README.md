@@ -82,7 +82,4 @@ This project is based on the excellent work done by the Jina AI team on their [R
 
 ## 📜 License
 
-This project is licensed under the same terms as the original Jina AI Reader project. Please refer to the LICENSE file for more details.
-````
-
-I've added the explanation right after the initial introduction and before the Key Features section. This gives users an immediate understanding of what the tool does and its primary use case. The added section explains that it converts URLs to LLM-friendly input and mentions its utility for agents and RAG systems.
+This project is licensed under Apache-2.0 same as the original Jina AI Reader project.
