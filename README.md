@@ -19,6 +19,13 @@ It converts any URL to an LLM-friendly input with `http://127.0.0.1:3000/https:/
 ## ⚠️ Limitations
 - 📄 Currently does not support parsing PDFs
 
+## 💻 Demo Environment
+The live demo is running on a VPS with the following specifications:
+- CPU: 1 vCore
+- RAM: 0.5 GB
+- Web Server: nginx
+
+This demonstrates that the Reader can run effectively even on minimal hardware resources.
 ## 🐳 Docker Deployment
 
 ### Option 1: Using the pre-built image
