@@ -2,7 +2,7 @@
 
 🌟 **Live Demo:** 
 
-Example: [https://reader.berlin.cx/https://github.com/intergalacticalvariable/reader/edit/main/README.md](https://reader.berlin.cx/https://github.com/intergalacticalvariable/reader/)
+Example: [https://reader.berlin.cx/https://github.com/intergalacticalvariable/reader/](https://reader.berlin.cx/https://github.com/intergalacticalvariable/reader/)
 
 This is an adapted version of [Jina AI's Reader](https://github.com/jina-ai/reader) for local deployment using Docker. 
 
