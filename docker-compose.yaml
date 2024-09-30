@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  reader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./screenshots:/app/local-storage
+    environment:
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      PUPPETEER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable"
+    command: node build/server.js
