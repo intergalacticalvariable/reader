@@ -8,11 +8,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - screenshots:/app/screenshots
+      - ./screenshots:/app/screenshots
     environment:
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
       PUPPETEER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable"
     command: node build/server.js
-
-volumes:
-  screenshots:
