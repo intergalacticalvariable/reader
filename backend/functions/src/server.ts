@@ -17,9 +17,16 @@ app.use('/instant-screenshots', express.static(path.join('/app', 'local-storage'
 app.all('*', async (req, res) => {
   try {
     await crawlerHost.crawl(req, res);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error during crawl:', error);
-    res.status(500).json({ error: 'An error occurred during the crawl' });
+
+    // Kontrola typu chyby
+    if (error.message.includes('Invalid TLD')) {
+      res.status(400).json({ error: 'Invalid URL or TLD' });
+    } else {
+      // Ošetrenie iných chýb
+      res.status(500).json({ error: 'An error occurred during the crawl' });
+    }
   }
 });
 
