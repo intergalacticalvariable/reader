@@ -63,6 +63,7 @@ export interface PageSnapshot {
     maxElemDepth?: number;
     elemCount?: number;
     childFrames?: PageSnapshot[];
+    error?: string;
 }
 
 export interface ExtendedSnapshot extends PageSnapshot {
@@ -316,6 +317,17 @@ export class PuppeteerControl extends AsyncService {
         this.logger.warn(`Browser killed`);
     }
 
+    private extractDomain(url: string): string {
+        try {
+            const { hostname } = new URL(url);
+            const parts = hostname.split('.');
+            return parts.length > 1 ? parts.slice(-2).join('.') : hostname;
+        } catch (error: any) {
+            this.logger.warn(`Failed to extract domain from URL: ${url}. Error: ${error.message}`);
+            return url;
+        }
+    }
+
     async newPage() {
         await this.serviceReady();
         const dedicatedContext = await this.browser.createBrowserContext();
@@ -355,8 +367,15 @@ export class PuppeteerControl extends AsyncService {
             if (!requestUrl.startsWith("http:") && !requestUrl.startsWith("https:") && requestUrl !== 'about:blank') {
                 return req.abort('blockedbyclient', 1000);
             }
-            const tldParsed = tldExtract(requestUrl);
-            domainSet.add(tldParsed.domain);
+
+            try {
+                const tldParsed = tldExtract(requestUrl);
+                domainSet.add(tldParsed.domain);
+            } catch (error) {
+                this.logger.warn(`Failed to parse TLD for URL: ${requestUrl}. Using fallback method.`);
+                const simpleDomain = this.extractDomain(requestUrl);
+                domainSet.add(simpleDomain);
+            }
 
             const parsedUrl = new URL(requestUrl);
 
@@ -547,15 +566,29 @@ document.addEventListener('load', handlePageLoad);
 
         const timeout = options?.timeoutMs || 30_000;
 
-        const gotoPromise = page.goto(url, {
-            waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
-            timeout,
-        })
-            .catch((err) => {
-                if (err instanceof TimeoutError) {
-                    this.logger.warn(`Page ${sn}: Browsing of ${url} timed out`, { err: marshalErrorLike(err) });
+        try {
+            let waitForPromise: Promise<any> | undefined;
+            let gotoPromise: Promise<PageSnapshot | void>;
+
+            gotoPromise = page.goto(url, {
+                waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
+                timeout,
+            })
+            .catch((err: any) => {
+                if (err instanceof TimeoutError || err.message.includes('ERR_NAME_NOT_RESOLVED')) {
+                    this.logger.warn(`Page ${sn}: Browsing of ${url} failed`, { err: marshalErrorLike(err) });
+                    return {
+                        title: 'Error: Unable to access page',
+                        href: url,
+                        html: '',
+                        text: `Failed to access the page: ${err.message}`,
+                        error: err.message
+                    } as PageSnapshot;
+                }
+                if (err.message && (err.message.includes('Invalid TLD') || err.message.includes('ERR_NAME_NOT_RESOLVED'))) {
+                    this.logger.warn(`Page ${sn}: Invalid domain or TLD for ${url}`, { err: marshalErrorLike(err) });
                     return new AssertionFailureError({
-                        message: `Failed to goto ${url}: ${err}`,
+                        message: `Invalid domain or TLD for ${url}: ${err}`,
                         cause: err,
                     });
                 }
@@ -622,76 +655,135 @@ document.addEventListener('load', handlePageLoad);
                 }
             });
 
-        let waitForPromise: Promise<any> | undefined;
-        if (options?.waitForSelector) {
-            console.log('Waiting for selector', options.waitForSelector);
-            const t0 = Date.now();
-            waitForPromise = nextSnapshotDeferred.promise.then(() => {
-                const t1 = Date.now();
-                const elapsed = t1 - t0;
-                const remaining = timeout - elapsed;
-                const thisTimeout = remaining > 100 ? remaining : 100;
-                const p = (Array.isArray(options.waitForSelector) ?
-                    Promise.all(options.waitForSelector.map((x) => page.waitForSelector(x, { timeout: thisTimeout }))) :
-                    page.waitForSelector(options.waitForSelector!, { timeout: thisTimeout }))
-                    .then(async () => {
-                        const pSubFrameSnapshots = this.snapshotChildFrames(page);
-                        snapshot = await page.evaluate('giveSnapshot(true)') as PageSnapshot;
+            if (options?.waitForSelector) {
+                console.log('Waiting for selector', options.waitForSelector);
+                const t0 = Date.now();
+                waitForPromise = nextSnapshotDeferred.promise.then(() => {
+                    const t1 = Date.now();
+                    const elapsed = t1 - t0;
+                    const remaining = timeout - elapsed;
+                    const thisTimeout = remaining > 100 ? remaining : 100;
+                    const p = (Array.isArray(options.waitForSelector) ?
+                        Promise.all(options.waitForSelector.map((x) => page.waitForSelector(x, { timeout: thisTimeout }))) :
+                        page.waitForSelector(options.waitForSelector!, { timeout: thisTimeout }))
+                        .then(async () => {
+                            const pSubFrameSnapshots = this.snapshotChildFrames(page);
+                            snapshot = await page.evaluate('giveSnapshot(true)') as PageSnapshot;
+                            screenshot = await page.screenshot();
+                            pageshot = await page.screenshot({ fullPage: true });
+                            if (snapshot) {
+                                snapshot.childFrames = await pSubFrameSnapshots;
+                            }
+                            finalized = true;
+                        })
+                        .catch((err) => {
+                            this.logger.warn(`Page ${sn}: Failed to wait for selector ${options.waitForSelector}`, { err: marshalErrorLike(err) });
+                            waitForPromise = undefined;
+                        });
+                    return p as any;
+                });
+            }
+
+            try {
+                let lastHTML = snapshot?.html;
+                while (true) {
+                    const ckpt = [nextSnapshotDeferred.promise, gotoPromise];
+                    if (waitForPromise) {
+                        ckpt.push(waitForPromise);
+                    }
+                    if (options?.minIntervalMs) {
+                        ckpt.push(delay(options.minIntervalMs));
+                    }
+                    let error;
+                    await Promise.race(ckpt).catch((err) => {
+                        if (err.message && (err.message.includes('Invalid TLD') || err.message.includes('ERR_NAME_NOT_RESOLVED'))) {
+                            this.logger.warn(`Invalid domain or TLD encountered: ${err.message}`);
+                            error = new AssertionFailureError({
+                                message: `Invalid domain or TLD for ${url}: ${err.message}`,
+                                cause: err,
+                            });
+                        } else {
+                            error = err;
+                        }
+                    });
+                    if (finalized && !error) {
+                        if (!snapshot && !screenshot) {
+                            if (error) {
+                                throw error;
+                            }
+                            throw new AssertionFailureError(`Could not extract any meaningful content from the page`);
+                        }
+                        yield { ...snapshot, screenshot, pageshot } as PageSnapshot;
+                        break;
+                    }
+                    if (options?.favorScreenshot && snapshot?.title && snapshot?.html !== lastHTML) {
                         screenshot = await page.screenshot();
                         pageshot = await page.screenshot({ fullPage: true });
-                        if (snapshot) {
-                            snapshot.childFrames = await pSubFrameSnapshots;
-                        }
-                        finalized = true;
-                    })
-                    .catch((err) => {
-                        this.logger.warn(`Page ${sn}: Failed to wait for selector ${options.waitForSelector}`, { err: marshalErrorLike(err) });
-                        waitForPromise = undefined;
-                    });
-                return p as any;
-            });
-        }
-
-        try {
-            let lastHTML = snapshot?.html;
-            while (true) {
-                const ckpt = [nextSnapshotDeferred.promise, gotoPromise];
-                if (waitForPromise) {
-                    ckpt.push(waitForPromise);
-                }
-                if (options?.minIntervalMs) {
-                    ckpt.push(delay(options.minIntervalMs));
-                }
-                let error;
-                await Promise.race(ckpt).catch((err) => error = err);
-                if (finalized && !error) {
-                    if (!snapshot && !screenshot) {
-                        if (error) {
+                        lastHTML = snapshot.html;
+                    }
+                    if (snapshot || screenshot) {
+                        yield { ...snapshot, screenshot, pageshot } as PageSnapshot;
+                    }
+                    if (error) {
+                        if (error instanceof AssertionFailureError &&
+                            (error.message.includes('Invalid TLD') || error.message.includes('ERR_NAME_NOT_RESOLVED'))) {
+                            this.logger.warn(`Continuing despite Invalid domain or TLD: ${error.message}`);
+                            yield {
+                                title: '',
+                                href: url,
+                                html: '',
+                                text: '',
+                                screenshot,
+                                pageshot,
+                                error: 'Invalid domain or TLD'
+                            } as PageSnapshot;
+                            break;
+                        } else {
                             throw error;
                         }
-                        throw new AssertionFailureError(`Could not extract any meaningful content from the page`);
                     }
-                    yield { ...snapshot, screenshot, pageshot } as PageSnapshot;
-                    break;
                 }
-                if (options?.favorScreenshot && snapshot?.title && snapshot?.html !== lastHTML) {
-                    screenshot = await page.screenshot();
-                    pageshot = await page.screenshot({ fullPage: true });
-                    lastHTML = snapshot.html;
-                }
-                if (snapshot || screenshot) {
-                    yield { ...snapshot, screenshot, pageshot } as PageSnapshot;
-                }
-                if (error) {
+            } catch (error: any) {
+                if (error.message && (error.message.includes('Invalid TLD') || error.message.includes('ERR_NAME_NOT_RESOLVED'))) {
+                    this.logger.warn(`Invalid domain or TLD encountered: ${error.message}`);
+                    yield {
+                        title: '',
+                        href: url,
+                        html: '',
+                        text: '',
+                        screenshot,
+                        pageshot,
+                        error: 'Invalid domain or TLD'
+                    } as PageSnapshot;
+                } else {
                     throw error;
                 }
+            } finally {
+                if (typeof waitForPromise !== 'undefined' && typeof gotoPromise !== 'undefined') {
+                    Promise.allSettled([gotoPromise, waitForPromise]).finally(() => {
+                        page.off('snapshot', hdl);
+                        this.ditchPage(page);
+                    });
+                } else if (typeof gotoPromise !== 'undefined') {
+                    gotoPromise.finally(() => {
+                        page.off('snapshot', hdl);
+                        this.ditchPage(page);
+                    });
+                } else {
+                    page.off('snapshot', hdl);
+                    this.ditchPage(page);
+                }
+                nextSnapshotDeferred.resolve();
             }
-        } finally {
-            (waitForPromise ? Promise.allSettled([gotoPromise, waitForPromise]) : gotoPromise).finally(() => {
-                page.off('snapshot', hdl);
-                this.ditchPage(page);
-            });
-            nextSnapshotDeferred.resolve();
+        } catch (error: any) {
+            this.logger.error(`Unhandled error in scrap method:`, error);
+            yield {
+                title: 'Error: Unhandled exception',
+                href: url,
+                html: '',
+                text: `An unexpected error occurred: ${error.message}`,
+                error: 'Unhandled exception'
+            } as PageSnapshot;
         }
     }
 

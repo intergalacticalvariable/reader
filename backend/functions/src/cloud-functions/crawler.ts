@@ -651,7 +651,7 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
                 }
             } catch (error) {
                 console.log('Invalid URL:', urlToCrawl, error);
-                return sendResponse(res, 'Invalid URL', { contentType: 'text/plain', envelope: null, code: 400 });
+                return sendResponse(res, 'Invalid URL or TLD', { contentType: 'text/plain', envelope: null, code: 400 });
             }
 
             // Prevent circular crawling
@@ -663,17 +663,34 @@ ${suffixMixins.length ? `\n${suffixMixins.join('\n\n')}\n` : ''}`;
 
             let lastScrapped: PageSnapshot | undefined;
 
-            for await (const scrapped of this.scrap(parsedUrl, crawlOpts, crawlerOptions)) {
-                lastScrapped = scrapped;
-                if (crawlerOptions.waitForSelector || ((!scrapped?.parsed?.content || !scrapped.title?.trim()) && !scrapped?.pdfs?.length)) {
-                    continue;
+            try {
+                for await (const scrapped of this.scrap(parsedUrl, crawlOpts, crawlerOptions)) {
+                    lastScrapped = scrapped;
+                    if (crawlerOptions.waitForSelector || ((!scrapped?.parsed?.content || !scrapped.title?.trim()) && !scrapped?.pdfs?.length)) {
+                        continue;
+                    }
+
+                    const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, parsedUrl);
+
+                    if (crawlerOptions.timeout === undefined) {
+                        return this.sendFormattedResponse(res, formatted, crawlerOptions.respondWith);
+                    }
                 }
-
-                const formatted = await this.formatSnapshot(crawlerOptions.respondWith, scrapped, parsedUrl);
-
-                if (crawlerOptions.timeout === undefined) {
+            } catch (scrapError: any) {
+                console.error('Error during scraping:', scrapError);
+                if (scrapError instanceof AssertionFailureError &&
+                    (scrapError.message.includes('Invalid TLD') || scrapError.message.includes('ERR_NAME_NOT_RESOLVED'))) {
+                    const errorSnapshot: PageSnapshot = {
+                        title: 'Error: Invalid domain or TLD',
+                        href: parsedUrl.toString(),
+                        html: '',
+                        text: `Failed to access the page due to an invalid domain or TLD: ${parsedUrl.toString()}`,
+                        error: 'Invalid domain or TLD'
+                    };
+                    const formatted = await this.formatSnapshot(crawlerOptions.respondWith, errorSnapshot, parsedUrl);
                     return this.sendFormattedResponse(res, formatted, crawlerOptions.respondWith);
                 }
+                throw scrapError; // Re-throw if it's not a handled error
             }
 
             if (!lastScrapped) {
